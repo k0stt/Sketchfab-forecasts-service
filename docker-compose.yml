@@ -1,0 +1,78 @@
+services:
+  # Основной веб-сервер для прогнозирования
+  web:
+    build: .
+    container_name: sketchfab-forecasts-web
+    ports:
+      - "8080:8080"
+    environment:
+      - SKETCHFAB_API_TOKEN=${SKETCHFAB_API_TOKEN}
+      - SKETCHFAB_API_URL=https://api.sketchfab.com/v3
+      - PORT=8080
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    command: /app/bin/server
+    restart: unless-stopped
+    networks:
+      - sketchfab-network
+
+  # Сервис для разового сбора данных
+  scraper:
+    build: .
+    container_name: sketchfab-forecasts-scraper
+    environment:
+      - SKETCHFAB_API_TOKEN=${SKETCHFAB_API_TOKEN}
+      - SKETCHFAB_API_URL=https://api.sketchfab.com/v3
+    volumes:
+      - ./data:/app/data
+    command: /app/bin/scraper -limit=500 -sort=likes
+    profiles:
+      - tools
+    networks:
+      - sketchfab-network
+
+  # Сервис для предобработки данных
+  preprocessor:
+    build: .
+    container_name: sketchfab-forecasts-preprocessor
+    volumes:
+      - ./data:/app/data
+    command: /app/bin/preprocessor
+    profiles:
+      - tools
+    networks:
+      - sketchfab-network
+
+  # Сервис для разведочного анализа
+  eda:
+    build: .
+    container_name: sketchfab-forecasts-eda
+    volumes:
+      - ./data:/app/data
+    command: python scripts/eda.py
+    profiles:
+      - tools
+    networks:
+      - sketchfab-network
+
+  # Сервис для обучения ML модели
+  trainer:
+    build: .
+    container_name: sketchfab-forecasts-trainer
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    command: python scripts/train_model.py
+    profiles:
+      - tools
+    networks:
+      - sketchfab-network
+
+networks:
+  sketchfab-network:
+    driver: bridge
+
+volumes:
+  data:
+  models:

@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Data and models (will be mounted as volumes)
+data/*.json
+data/*.csv
+data/*.png
+models/*.pkl
+models/*.joblib
+
+# Build artifacts
+bin/
+dist/
+*.exe
+
+# Go
+*.test
+*.out
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+hello
