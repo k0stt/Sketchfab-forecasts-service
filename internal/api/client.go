@@ -143,9 +143,10 @@ type SearchParams struct {
 	Query        string
 	Categories   []string
 	Tags         []string
-	Sort         string // "relevance", "likes", "views", "recent"
+	Sort         string // "-likeCount", "-viewCount", "-publishedAt"
 	Downloadable bool
 	Animated     bool
+	DateFilter   string // количество дней для фильтрации (например, "30" для последнего месяца)
 }
 
 // BuildSearchParams создает map параметров для API
@@ -178,6 +179,11 @@ func BuildSearchParams(sp SearchParams) map[string]string {
 
 	if sp.Animated {
 		params["animated"] = "true"
+	}
+
+	// Добавляем фильтр по дате для последнего месяца
+	if sp.DateFilter != "" {
+		params["date"] = sp.DateFilter
 	}
 
 	return params

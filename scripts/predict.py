@@ -101,7 +101,26 @@ def simple_predict(input_data):
     score += input_data.get('tag_count', 0) * 0.15
     score += input_data.get('category_count', 0) * 0.2
     score += input_data.get('description_length', 0) * 0.001
-    score += input_data.get('author_followers', 0) * 0.0001
+    score += input_data.get('author_followers', 0) * 0.0005
+    
+    # ВАЖНО: Учитываем полигоны!
+    face_count = input_data.get('face_count', 0)
+    vertex_count = input_data.get('vertex_count', 0)
+    
+    # Оптимальный диапазон полигонов: 5000-50000
+    if 5000 <= face_count <= 50000:
+        score += 1.0
+    elif face_count > 0:
+        if face_count < 5000:
+            score += 0.5 * (face_count / 5000)
+        else:
+            score += 0.5 * max(0, 1 - (face_count - 50000) / 100000)
+    
+    # Учитываем вершины
+    if 2500 <= vertex_count <= 25000:
+        score += 0.5
+    elif vertex_count > 0:
+        score += 0.2
     
     if input_data.get('is_downloadable', False):
         score += 0.5
@@ -109,11 +128,12 @@ def simple_predict(input_data):
     if input_data.get('is_premium_author', False):
         score += 0.3
     
-    if input_data.get('animation_count', 0) > 0:
-        score += 0.2
+    animation_count = input_data.get('animation_count', 0)
+    if animation_count > 0:
+        score += animation_count * 0.2
     
-    # Нормализация
-    score = min(score, 10.0)
+    # Нормализация (шкала 0-10)
+    score = min(max(score, 0), 10.0)
     
     if score < 2.0:
         category = "low"

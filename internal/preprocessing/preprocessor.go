@@ -45,13 +45,14 @@ func (p *Preprocessor) ProcessModels(rawModels []models.SketchfabModel) []models
 }
 
 // calculatePopularityScore вычисляет общий показатель популярности
-// Формула: взвешенная сумма лайков, просмотров и скачиваний
+// Формула: взвешенная сумма лайков, просмотров, скачиваний и качества модели (полигоны)
 func (p *Preprocessor) calculatePopularityScore(model models.SketchfabModel) float64 {
 	// Веса для различных метрик
 	const (
-		viewWeight     = 0.3
-		likeWeight     = 0.4
-		downloadWeight = 0.3
+		viewWeight     = 0.25 // уменьшено
+		likeWeight     = 0.35 // уменьшено
+		downloadWeight = 0.25 // уменьшено
+		polygonWeight  = 0.15 // новый вес для полигонов (3-4 по важности)
 	)
 
 	// Нормализация логарифмом для снижения влияния выбросов
@@ -59,9 +60,56 @@ func (p *Preprocessor) calculatePopularityScore(model models.SketchfabModel) flo
 	likes := math.Log1p(float64(model.LikeCount))
 	downloads := math.Log1p(float64(model.DownloadCount))
 
-	score := (views * viewWeight) + (likes * likeWeight) + (downloads * downloadWeight)
+	// Оптимальное количество полигонов зависит от цели использования
+	// Для большинства моделей оптимально 5k-50k полигонов
+	// Слишком мало или слишком много - плохо
+	polygonScore := p.calculatePolygonScore(model.FaceCount)
+
+	score := (views * viewWeight) +
+		(likes * likeWeight) +
+		(downloads * downloadWeight) +
+		(polygonScore * polygonWeight)
 
 	return score
+}
+
+// calculatePolygonScore оценивает качество модели по количеству полигонов
+// Возвращает нормализованную оценку (0-10)
+func (p *Preprocessor) calculatePolygonScore(faceCount int) float64 {
+	if faceCount <= 0 {
+		return 0
+	}
+
+	// Оптимальный диапазон: 5,000 - 50,000 полигонов
+	const (
+		minOptimal  = 5000.0
+		maxOptimal  = 50000.0
+		penaltyRate = 0.5 // штраф за выход за пределы оптимума
+	)
+
+	faces := float64(faceCount)
+
+	// Если в оптимальном диапазоне - максимальная оценка
+	if faces >= minOptimal && faces <= maxOptimal {
+		// Чем ближе к середине диапазона, тем лучше
+		mid := (minOptimal + maxOptimal) / 2
+		distance := math.Abs(faces - mid)
+		maxDistance := (maxOptimal - minOptimal) / 2
+		return 10.0 * (1.0 - (distance/maxDistance)*0.2) // небольшой штраф за отклонение от середины
+	}
+
+	// Если меньше оптимума
+	if faces < minOptimal {
+		// Линейное снижение оценки
+		ratio := faces / minOptimal
+		return math.Log1p(faces) * ratio * penaltyRate
+	}
+
+	// Если больше оптимума
+	// Логарифмическое снижение оценки для очень больших моделей
+	excess := (faces - maxOptimal) / maxOptimal
+	penalty := 1.0 / (1.0 + excess*penaltyRate)
+	return 10.0 * penalty
 }
 
 // isPremiumUser проверяет, является ли пользователь премиум

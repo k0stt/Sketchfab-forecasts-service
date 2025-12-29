@@ -14,7 +14,8 @@ import (
 var (
 	limit      = flag.Int("limit", 500, "Количество моделей для сбора")
 	outputFile = flag.String("output", "data/raw_models.json", "Путь к выходному файлу")
-	sort       = flag.String("sort", "likes", "Сортировка: likes, views, recent")
+	sort       = flag.String("sort", "-likeCount", "Сортировка: -likeCount, -viewCount, -publishedAt")
+	dateFilter = flag.String("date", "30", "Фильтр по дате публикации в днях (например, 30 для последнего месяца)")
 )
 
 func main() {
@@ -45,6 +46,7 @@ func main() {
 	logger.Info("Начинаем сбор данных с Sketchfab API...")
 	logger.Infof("Лимит моделей: %d", *limit)
 	logger.Infof("Сортировка: %s", *sort)
+	logger.Infof("Фильтр по дате: последние %s дней", *dateFilter)
 
 	// Создание API клиента
 	client := api.NewClient(apiURL, apiToken, logger)
@@ -53,6 +55,7 @@ func main() {
 	searchParams := api.SearchParams{
 		Sort:         *sort,
 		Downloadable: false,
+		DateFilter:   *dateFilter,
 	}
 	params := api.BuildSearchParams(searchParams)
 

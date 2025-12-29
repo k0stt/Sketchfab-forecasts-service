@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"sketchfab-forecasts/internal/ml"
 	"sketchfab-forecasts/internal/models"
 
@@ -64,6 +66,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/stats", s.handleStats)
 		r.Get("/model-info", s.handleModelInfo)
 		r.Get("/eda-charts", s.handleEdaCharts)
+		r.Post("/train", s.handleTrain) // Новый эндпоинт для обучения
 	})
 
 	// Serve static files (EDA charts and other data)
@@ -92,9 +95,13 @@ func (s *Server) handlePredict(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Infof("Prediction request: %+v", req)
 
-	// Используем mock предсказание (без Python, для быстрого запуска)
-	// Для использования реальной ML модели замените на: prediction, err := s.predictor.Predict(req)
-	prediction := s.predictor.MockPredict(req)
+	// Используем реальную ML модель (расширенную)
+	prediction, err := s.predictor.Predict(req)
+	if err != nil {
+		s.logger.Errorf("Prediction failed: %v", err)
+		// Fallback на mock если модель не обучена
+		prediction = s.predictor.MockPredict(req)
+	}
 
 	s.logger.Infof("Prediction result: %+v", prediction)
 
@@ -237,16 +244,24 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
             font-weight: 600;
             font-size: 14px;
         }
-        input[type="number"] {
+        input[type="number"],
+        input[type="text"],
+        textarea {
             width: 100%;
             padding: 10px;
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             font-size: 14px;
+            font-family: inherit;
         }
-        input:focus {
+        input:focus,
+        textarea:focus {
             outline: none;
             border-color: #667eea;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 80px;
         }
         .checkbox-group {
             display: flex;
@@ -349,17 +364,17 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
             
             <div id="prediction-tab" class="tab-content active">
                 <form id="predictionForm" class="form-columns">
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>Теги (через запятую):</label>
+                        <input type="text" id="tagsInput" placeholder="lowpoly, pbr, game, character" value="lowpoly, pbr, game">
+                    </div>
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>Описание модели:</label>
+                        <textarea id="descriptionInput" rows="3" placeholder="Детальное описание модели...">High quality 3D model with PBR textures, optimized for real-time rendering.</textarea>
+                    </div>
                     <div class="form-group">
                         <label>Категории:</label>
                         <input type="number" id="categoryCount" min="0" max="10" value="2">
-                    </div>
-                    <div class="form-group">
-                        <label>Теги:</label>
-                        <input type="number" id="tagCount" min="0" max="50" value="8">
-                    </div>
-                    <div class="form-group">
-                        <label>Длина описания:</label>
-                        <input type="number" id="descriptionLength" min="0" max="5000" value="250">
                     </div>
                     <div class="form-group">
                         <label>Полигоны (faces):</label>
@@ -392,7 +407,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
                 <div class="result" id="result">
                     <div style="text-align:center; font-size:20px; font-weight:600; margin-bottom:10px" id="category"></div>
                     <div class="score" id="score"></div>
-                    <div style="text-align:center; color:#666" id="confidence"></div>
+                    <div style="text-align:center; color:#666; margin-bottom:20px" id="confidence"></div>
+                    <div id="qualityRating" style="display:none;">
+                        <div style="border-top: 2px solid #e0e0e0; padding-top:20px; margin-top:20px;">
+                            <h3 style="color:#667eea; margin-bottom:15px; text-align:center;">📊 Рейтинг качества модели</h3>
+                            <div style="text-align:center; font-size:36px; font-weight:bold; color:#667eea; margin:15px 0;" id="qualityScore"></div>
+                            <div style="text-align:center; font-size:18px; color:#666; margin-bottom:20px;" id="qualityGrade"></div>
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:10px; margin-top:15px;" id="qualityDetails"></div>
+                            <div id="qualityRecommendations" style="margin-top:20px;"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
             
@@ -422,10 +446,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
         }
         
         async function predict() {
+            const tagsText = document.getElementById('tagsInput').value;
+            const tags = tagsText.split(',').map(t => t.trim()).filter(t => t);
+            const description = document.getElementById('descriptionInput').value;
+            
             const data = {
+                tags: tags,
+                description: description,
                 category_count: parseInt(document.getElementById('categoryCount').value),
-                tag_count: parseInt(document.getElementById('tagCount').value),
-                description_length: parseInt(document.getElementById('descriptionLength').value),
+                tag_count: tags.length,
+                description_length: description.length,
                 face_count: parseInt(document.getElementById('faceCount').value),
                 vertex_count: parseInt(document.getElementById('vertexCount').value),
                 animation_count: parseInt(document.getElementById('animationCount').value),
@@ -448,11 +478,46 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
                     'high': '📈 Высокая популярность'
                 };
                 
-                document.getElementById('category').textContent = categoryText[result.category];
+                document.getElementById('category').textContent = categoryText[result.category || result.popularity_category];
                 document.getElementById('score').textContent = result.popularity_score.toFixed(2);
-                document.getElementById('score').className = 'score ' + result.category;
+                document.getElementById('score').className = 'score ' + (result.category || result.popularity_category);
                 document.getElementById('confidence').textContent = 
                     'Уверенность: ' + (result.confidence * 100).toFixed(0) + '%';
+                
+                // Показываем рейтинг качества, если он есть
+                if (result.quality_rating) {
+                    const qr = result.quality_rating;
+                    document.getElementById('qualityScore').textContent = qr.score.toFixed(1) + '/100';
+                    document.getElementById('qualityGrade').textContent = 'Оценка: ' + qr.grade;
+                    
+                    const detailsDiv = document.getElementById('qualityDetails');
+                    detailsDiv.innerHTML = Object.entries(qr.details).map(([key, value]) => 
+                        '<div style="background:#fff; padding:10px; border-radius:5px; text-align:center;">' +
+                        '<div style="font-size:20px; font-weight:bold; color:#667eea;">' + value.toFixed(0) + '</div>' +
+                        '<div style="font-size:11px; color:#666; text-transform:capitalize;">' + key + '</div>' +
+                        '</div>'
+                    ).join('');
+                    
+                    if (qr.recommendations && qr.recommendations.length > 0) {
+                        document.getElementById('qualityRecommendations').innerHTML = 
+                            '<div style="background:#fff3cd; padding:15px; border-radius:8px; margin-top:15px;">' +
+                            '<div style="font-weight:600; margin-bottom:10px; color:#856404;">💡 Рекомендации:</div>' +
+                            qr.recommendations.map((rec, i) => 
+                                '<div style="margin:5px 0; color:#856404; font-size:13px;">' + (i+1) + '. ' + rec + '</div>'
+                            ).join('') +
+                            '</div>';
+                    } else {
+                        document.getElementById('qualityRecommendations').innerHTML = 
+                            '<div style="background:#d4edda; padding:15px; border-radius:8px; margin-top:15px; color:#155724; text-align:center;">' +
+                            '✅ Отлично! Модель соответствует высоким стандартам.' +
+                            '</div>';
+                    }
+                    
+                    document.getElementById('qualityRating').style.display = 'block';
+                } else {
+                    document.getElementById('qualityRating').style.display = 'none';
+                }
+                
                 document.getElementById('result').classList.add('show');
             } catch (error) {
                 alert('Ошибка: ' + error.message);
@@ -562,26 +627,63 @@ func (s *Server) Start(port string) error {
 }
 
 func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request) {
-	// Load model metrics from file if it exists
+	// Load model metrics from advanced model
 	type ModelMetrics struct {
-		Trained         bool     `json:"trained"`
-		TrainingDate    string   `json:"training_date,omitempty"`
-		RMSE            float64  `json:"rmse,omitempty"`
-		MAE             float64  `json:"mae,omitempty"`
-		R2Score         float64  `json:"r2_score,omitempty"`
-		TrainingSamples int      `json:"training_samples,omitempty"`
-		Features        []string `json:"features,omitempty"`
+		Trained         bool                   `json:"trained"`
+		TrainingDate    string                 `json:"training_date,omitempty"`
+		RMSE            float64                `json:"rmse,omitempty"`
+		MAE             float64                `json:"mae,omitempty"`
+		R2Score         float64                `json:"r2_score,omitempty"`
+		TrainingSamples int                    `json:"training_samples,omitempty"`
+		ModelType       string                 `json:"model_type,omitempty"`
+		Features        map[string]interface{} `json:"features,omitempty"`
 	}
 
 	metrics := ModelMetrics{Trained: false}
 
-	// Try to load model info from models/model_metrics.json
-	if data, err := os.ReadFile("models/model_metrics.json"); err == nil {
+	// Try to load advanced model metrics
+	if data, err := os.ReadFile("models/model_metrics_advanced.json"); err == nil {
 		json.Unmarshal(data, &metrics)
 		metrics.Trained = true
 	}
 
 	respondJSON(w, http.StatusOK, metrics)
+}
+
+func (s *Server) handleTrain(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Limit int `json:"limit"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err == nil && req.Limit > 0 {
+		s.logger.Infof("Starting training with limit: %d", req.Limit)
+	} else {
+		s.logger.Info("Starting training with all data")
+		req.Limit = 0
+	}
+
+	// Запускаем обучение в фоне
+	go func() {
+		var cmd *exec.Cmd
+		if req.Limit > 0 {
+			cmd = exec.Command("python", "scripts/train_model_advanced.py", fmt.Sprintf("%d", req.Limit))
+		} else {
+			cmd = exec.Command("python", "scripts/train_model_advanced.py")
+		}
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			s.logger.Errorf("Training failed: %v\nOutput: %s", err, string(output))
+		} else {
+			s.logger.Info("Training completed successfully")
+		}
+	}()
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "started",
+		"message": "Обучение запущено в фоновом режиме",
+		"limit":   req.Limit,
+	})
 }
 
 func (s *Server) handleEdaCharts(w http.ResponseWriter, r *http.Request) {
